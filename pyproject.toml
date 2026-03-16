@@ -1,0 +1,19 @@
+[project]
+name = "esp-design-tool"
+version = "0.1.0"
+description = "ESP Design Engineering Tool"
+authors = [
+    {name = "Your Name", email = "you@example.com"},
+]
+dependencies = [
+    "streamlit>=1.53.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "plotly>=5.18.0",
+    "scipy>=1.10.0"
+]
+requires-python = ">=3.9"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
