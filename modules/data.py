@@ -68,9 +68,31 @@ def get_motor_catalog():
 
 def get_protector_catalog():
     data = {
-        "Series": ["400", "538"],
-        "Max_Temp_F": [300, 350],
-        "Type": ["Standard", "High Temp"]
+        "Manufacturer": ["Manufacturer"] * 7,
+        "Series": ["338", "400", "540", "538", "562", "675", "738"],
+        "Type": ["All"] * 7,
+        "Max HP": [2.41, 2.41, 3.89, 4.0, 4.0, 4.0, 4.0],
+        "Min. Casing Size (in)": [4.5, 5.5, 6.625, 7.0, 7.0, 8.625, 9.625]
+    }
+    return pd.DataFrame(data)
+
+def get_protector_applicability():
+    data = {
+        "Application Type": [
+            "BHT < 250F", "250F < BHT < 300F", "(A)", "G < 0.82", 
+            "HP < 50", "HP < 150", "HP > 150", "Miscible Well Fluid", 
+            "Deviated Well", "Intermittent Operation", "Aggressive Well Fluids (B)"
+        ],
+        "L":     ["X", "", "", "X", "X", "", "", "", "", "", ""],
+        "LSL":   ["X", "", "", "X", "X", "", "", "", "", "", ""],
+        "LSLSL": ["X", "", "", "X", "X", "", "", "", "", "", ""],
+        "B":     ["", "X", "X", "", "X", "", "", "X", "X", "X", "X"],
+        "LSB":   ["", "X", "X", "", "X", "X", "", "X", "X", "X", "X"],
+        "LSBPB": ["", "X", "X", "", "X", "X", "X", "X", "X", "X", "X"],
+        "BSL":   ["", "X", "X", "", "X", "", "", "X", "X", "X", "X"],
+        "BSBSL": ["", "X", "X", "", "X", "X", "", "X", "X", "X", "X"],
+        "BPBSL": ["", "X", "X", "", "X", "X", "X", "X", "X", "X", "X"],
+        "LSBSB": ["", "X", "X", "", "X", "X", "X", "X", "X", "X", "X"]
     }
     return pd.DataFrame(data)
 
@@ -103,5 +125,26 @@ def get_failure_database():
         "Failure Item": ["Cable", "Shaft", "Motor"],
         "Failure Item Specific": ["Short Circuit", "Broken", "Burned"],
         "General Failure": ["Electrical", "Mechanical", "Electrical"]
+    }
+    return pd.DataFrame(data)
+
+def get_gas_separator_catalog():
+    data = {
+        "Model": ["KGS-400", "KGS-538", "KGS-675"],
+        "Manufacturer": ["SLB", "SLB", "SLB"],
+        "HP_Required": [3, 5, 8],
+        "Max_Rate_BPD": [2000, 4000, 8000]
+    }
+    return pd.DataFrame(data)
+
+def get_agh_catalog():
+    data = {
+        "Stage": [92, 128, 97, 84, 131, 206, 204],
+        "Housing OD (in)": [4, 5.13, 4, 4, 5.13, 5.38, 5.38],
+        "Op Min Rate (bpd)": [500, 2000, 1200, 2000, 4000, 7000, 5000],
+        "BEP Rate (bpd)": [1649, 3121, 3111, 5446, 6256, 8625, 8026],
+        "Op Max Rate (bpd)": [2100, 4000, 3600, 6000, 8000, 10000, 9000],
+        "Eff_Pump": [0.2426, 0.1062, 0.0996, 0.0839, 0.0714, 0.0522, 0.0397],
+        "head_per_stg": [29.3543, 47.4711, 29.0973, 28.4489, 47.5293, 58.4037, 56.1767]
     }
     return pd.DataFrame(data)

@@ -63,6 +63,7 @@ def calculate_gas_properties(gor, api, sg_gas, pressure, temp_f, water_cut, liqu
         "gvf": gvf,
         "turpin": turpin,
         "recommendation": recommendation,
+        "total_liq_bh_bpd": total_liq_bh,
         "total_fluid_bh_bpd": total_fluid_bh,
         "free_gas_pct": gvf * 100
     }
@@ -77,6 +78,27 @@ def calculate_tdh(tvd, whp, pip, sg_mix):
     
     tdh = tvd + whp_head + friction - pip_head
     return max(0, tdh)
+
+def calculate_system_head(q, tvd, whp, sbhp, pbhp, test_rate, sg_mix):
+    """
+    Calculate System Head (ft) for a given rate Q (BPD).
+    TDH_sys = TVD + WHP_head + Friction_head - PIP_head
+    """
+    # 1. Static BHP to PIP conversion using PI
+    denom = (sbhp - pbhp)
+    pi = test_rate / denom if denom > 0 else 1.0
+    pip = sbhp - (q / pi)
+    
+    # 2. Convert pressures to head
+    whp_head = whp / (0.433 * sg_mix) if sg_mix > 0 else 0
+    pip_head = pip / (0.433 * sg_mix) if sg_mix > 0 else 0
+    
+    # 3. Friction approximation (mock: 20ft per 1000ft @ 2000 BPD)
+    # Head Loss ~ Q^1.8
+    fric_head = (tvd / 1000 * 20) * (q / 2000)**1.8 if q > 0 else 0
+    
+    tdh_sys = tvd + whp_head + fric_head - pip_head
+    return max(0, tdh_sys)
 
 def calculate_stages(tdh, head_per_stage):
     if head_per_stage <= 0: return 0
@@ -127,4 +149,24 @@ def calculate_electrical(cable_ohms, amps, length_ft, motor_volts):
         "v_drop": v_drop,
         "surf_voltage": surf_volts,
         "kva": kva
+    }
+
+def calculate_motor_performance(load_pct, motor_name="Standard Motor"):
+    """
+    Mock function to return RPM, Amp, and Efficiency based on load percentage.
+    Load is 0 to 100%.
+    """
+    # RPM: 3565 at 0% load, 3465 at 100% load. Clip at 3000.
+    rpm = max(3000, 3565 - (load_pct * 1.0))
+    
+    # Amperage: 20A at 0%, 100A at 100%
+    amp = 20 + (load_pct * 0.8)
+    
+    # Efficiency: bell curve. Max at 80% load. Clip at 50% for display.
+    eff = max(50.0, 85 + 4 * (1 - ((load_pct - 80)/40)**2))
+    
+    return {
+        "rpm": rpm,
+        "amp": amp,
+        "eff": eff
     }

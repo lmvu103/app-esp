@@ -57,7 +57,7 @@ temp_est = 100 + (st.session_state.depth_tvd / 100) * 1.5
 sg_oil = 141.5 / (131.5 + st.session_state.api)
 sg_mix = (sg_oil * (1 - st.session_state.wc/100)) + (1.05 * st.session_state.wc/100)
 
-def render_pump_curve(pump_model, stages, freq, op_point=None):
+def render_pump_curve(pump_model, stages, freq, op_point=None, system_curve=None):
     pump_df = data.get_pump_catalog()
     if pump_model not in pump_df['Model'].values: return None
     
@@ -75,7 +75,12 @@ def render_pump_curve(pump_model, stages, freq, op_point=None):
     h_freq = h_ref * (ratio**2) * stages
     
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=qs, y=h_freq, name=f"Head @ {freq}Hz"))
+    fig.add_trace(go.Scatter(x=qs, y=h_freq, name=f"Pump Head @ {freq}Hz", line=dict(color='#0077b6', width=3)))
+    
+    if system_curve:
+        # system_curve = (qs_sys, h_sys)
+        fig.add_trace(go.Scatter(x=system_curve[0], y=system_curve[1], name="System Curve", 
+                                line=dict(color='#f3722c', width=2, dash='dash')))
     
     # ROR Box
     fig.add_vrect(x0=q_bm_min, x1=q_bm_max, fillcolor="green", opacity=0.1, annotation_text="ROR")
@@ -83,13 +88,15 @@ def render_pump_curve(pump_model, stages, freq, op_point=None):
     if op_point:
         # op_point = (q, h)
         fig.add_trace(go.Scatter(x=[op_point[0]], y=[op_point[1]], mode='markers', 
-                                 marker=dict(size=12, color='red', symbol='star'), name="Operating Point"))
+                                 marker=dict(size=14, color='#d90429', symbol='star'), name="Operating Point"))
     
     fig.update_layout(
-        title=dict(text=f"Pump performance: {pump_model}", font=dict(size=20)),
+        title=dict(text=f"Pump performance: {pump_model}", font=dict(size=20, color='#003049')),
         xaxis_title="Rate (BPD)", 
         yaxis_title="Head (ft)",
-        margin=dict(l=20, r=20, t=60, b=20)
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=20, r=20, t=80, b=20)
     )
     return fig
 
@@ -142,22 +149,88 @@ if nav == "ESP design":
         c3.metric("Free gas", f"{gas_res['free_gas_pct']:.1f}%")
         st.success(f"Recommendation: {gas_res['recommendation']}", icon=":material/check_circle:")
 
+        # --- GAS HANDLING UI ---
+        if gas_res['recommendation'] != "Standard Intake":
+            st.markdown("---")
+            col_l, col_r = st.columns(2)
+            
+            with col_l:
+                st.subheader("Select Gas Separator")
+                sep_df = data.get_gas_separator_catalog()
+                sel_sep = st.selectbox("Select Gas Separator", sep_df['Model'], label_visibility="collapsed")
+                sep_row = sep_df[sep_df['Model'] == sel_sep].iloc[0]
+                
+                st.markdown(f"**HP Required:** {sep_row['HP_Required']} HP")
+                st.write("Rate at pump intake (BFPD):")
+                st.info(f"{gas_res['total_liq_bh_bpd']:.2f}")
+                st.write("Free gas at pump intake (%):")
+                st.info(f"{gas_res['free_gas_pct']:.1f}")
+                
+                fig_gas = plotting.plot_gas_handling_chart(gas_res['total_liq_bh_bpd'], gas_res['free_gas_pct'])
+                st.plotly_chart(fig_gas, use_container_width=True)
+                
+            with col_r:
+                st.subheader("AGH")
+                use_agh = st.toggle("Use AGH", value=True)
+                agh_df = data.get_agh_catalog()
+                # Vertical stage label in image, stylized as dataframe
+                st.dataframe(agh_df, hide_index=True, use_container_width=True)
+                
+                st.checkbox("Use AGH Recommendation", value=False)
+                st.subheader("Select AGH")
+                st.selectbox("Select AGH", ["Gas handler stage 1", "Gas handler stage 2"], label_visibility="collapsed")
+                st.markdown(f"**AGH horsepower required:** 13 HP")
+
     # --- TAB 3: PUMP ---
     with tabs[2]:
         st.header("Step 3: Pump selection")
-        tdh = calculations.calculate_tdh(st.session_state.depth_tvd, st.session_state.whp, st.session_state.pbhp, sg_mix)
-        st.metric("Required TDH", f"{tdh:.0f} ft")
         
-        pump_df = data.get_pump_catalog()
-        st.session_state.manufacturer = st.selectbox("Manufacturer", pump_df['Manufacturer'].unique())
-        avail = pump_df[pump_df['Manufacturer'] == st.session_state.manufacturer]
-        st.session_state.pump_selected = st.selectbox("Model", avail['Model'])
+        # Results from Step 2
+        q_intake = gas_res['total_fluid_bh_bpd']
         
-        row = avail[avail['Model'] == st.session_state.pump_selected].iloc[0]
-        q = st.session_state.target_rate
-        h_stg = row['Head_Coeff_A'] + row['Head_Coeff_B']*q + row['Head_Coeff_C']*q**2
-        stages = calculations.calculate_stages(tdh, max(1,h_stg))
-        st.session_state.stages = st.number_input("Stages", value=stages)
+        col_l, col_r = st.columns([2, 1])
+        
+        with col_l:
+            st.subheader("Select Pump")
+            pump_df = data.get_pump_catalog()
+            st.session_state.manufacturer = st.selectbox("Manufacturer", pump_df['Manufacturer'].unique())
+            avail = pump_df[pump_df['Manufacturer'] == st.session_state.manufacturer]
+            st.session_state.pump_selected = st.selectbox("Model", avail['Model'])
+            
+            st.write(f"You selected: {st.session_state.pump_selected}")
+            
+            row = avail[avail['Model'] == st.session_state.pump_selected].iloc[0]
+            
+            # Use intake rate for stage calculation
+            h_stg = row['Head_Coeff_A'] + row['Head_Coeff_B']*q_intake + row['Head_Coeff_C']*q_intake**2
+            tdh = calculations.calculate_tdh(st.session_state.depth_tvd, st.session_state.whp, st.session_state.pbhp, sg_mix)
+            stages = calculations.calculate_stages(tdh, max(1, h_stg))
+            
+            st.session_state.stages = st.number_input("Stages", value=stages)
+            
+            st.subheader("Pump Curve from Catalogue")
+            fig_pump = plotting.plot_pump_catalog_curve(row, q_intake, st.session_state.stages)
+            st.plotly_chart(fig_pump, use_container_width=True)
+            
+        with col_r:
+            st.write("") # Spacer
+            st.write("")
+            st.write("")
+            st.markdown(f"#### Estimated Down Hole Rate: {q_intake:.1f} BFPD")
+            
+            st.markdown(f"#### Estimated Total Dynamic Head: {tdh:.1f} ft")
+            st.info("Evaluate the total dynamic head, check WHP and tubing size if TDH looks unreasonable.", icon=":material/info:")
+            
+            st.markdown(f"#### Number of stages: {st.session_state.stages} stages")
+            st.info("Consider the number of stage, the higher the number the longer the pump.", icon=":material/info:")
+            
+            hp_pump = calculations.calculate_hp_required(st.session_state.stages, row['HP_per_Stage_at_BEP'], sg_mix)
+            st.session_state.req_hp = hp_pump # Store for next steps
+            
+            st.markdown(f"#### Pump horsepower required: {int(hp_pump)} HP")
+            st.info("Power requirement affect electrical equipment on the surface", icon=":material/bolt:")
+            
+            st.warning("Check the ROR and consider the changes of operating condition. ROR of pump must mitigate all operating condition rate", icon=":material/warning:")
         
         req_hp = calculations.calculate_hp_required(st.session_state.stages, row['HP_per_Stage_at_BEP'], sg_mix)
         st.session_state.req_hp = req_hp
@@ -166,33 +239,119 @@ if nav == "ESP design":
     # --- TAB 4: PROTECTOR ---
     with tabs[3]:
         st.header("Step 4: Protector")
-        prot_df = data.get_protector_catalog()
-        valid = prot_df[prot_df['Max_Temp_F'] > temp_est]
-        if not valid.empty:
-            sel = st.selectbox("Protector", valid['Series'] + " " + valid['Type'])
-            st.session_state.protector_selected = sel
-        else: st.error("No protector for this temp!", icon=":material/error:")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Chamber Configuration Application Guideline")
+            app_df = data.get_protector_applicability()
+            st.dataframe(app_df, hide_index=True, use_container_width=True)
+            st.caption("(A) Applicability improves with correct elastomers for higher temperature service, usually Aflas.")
+            st.caption("(B) Those that deteriorate specific elastomers used.")
+            
+            st.subheader("Protector Configuration:")
+            configs = ["L", "LSL", "LSLSL", "B", "LSB", "LSBPB", "BSL", "BSBSL", "BPBSL", "LSBSB"]
+            st.selectbox("Protector Configuration", configs, label_visibility="collapsed")
+
+        with col2:
+            st.subheader("Protector Catalog")
+            prot_df = data.get_protector_catalog()
+            st.dataframe(prot_df, hide_index=True, use_container_width=True)
+            
+            st.divider()
+            # Selection logic
+            valid = prot_df[prot_df['Min. Casing Size (in)'] <= st.session_state.casing_id]
+            if not valid.empty:
+                sel_series = st.selectbox("Select Protector Series", valid['Series'])
+                st.session_state.protector_selected = sel_series
+                st.success(f"Selected Protector Series: {sel_series}", icon=":material/check_circle:")
+            else:
+                st.error("No protector matches casing size!", icon=":material/error:")
 
     # --- TAB 5: MOTOR ---
     with tabs[4]:
         st.header("Step 5: Motor")
+        
+        # 1. HP Breakdown
+        p_row = data.get_pump_catalog()
+        p_row = p_row[p_row['Model'] == st.session_state.pump_selected].iloc[0] if st.session_state.pump_selected else None
+        
+        hp_pump = calculations.calculate_hp_required(st.session_state.stages, p_row['HP_per_Stage_at_BEP'], sg_mix) if p_row is not None else 0.0
+        hp_prot = 2.4 # Mock value from image
+        hp_sep = 3.0 if "Separator" in gas_res['recommendation'] else 0.0
+        hp_agh = 13.0 if "AGH" in gas_res['recommendation'] else 0.0
+        
+        hp_total = hp_pump + hp_prot + hp_sep + hp_agh
+        
+        # 2. Motor Selection logic
+        hp_extreme = hp_total * 1.24 # ~25% margin
+        hp_load_80 = hp_total / 0.8
+        hp_target = max(hp_extreme, hp_load_80)
+        
         mot_df = data.get_motor_catalog()
-        valid = mot_df[mot_df['HP_Rating'] >= st.session_state.req_hp]
-        if valid.empty: st.warning("Need tandem!", icon=":material/warning:")
+        valid_motors = mot_df[mot_df['HP_Rating'] >= hp_target]
+        if valid_motors.empty:
+            st.warning("Need tandem motor or larger motor!", icon=":material/warning:")
+            selected_motor = mot_df.iloc[-1] # Fallback to largest
         else:
-            sel = valid.iloc[0]
-            st.session_state.motor_hp = sel['HP_Rating']
-            st.session_state.motor_selected = sel
-            st.success(f"Selected: {sel['Series']} - {sel['HP_Rating']} HP", icon=":material/check_circle:")
+            selected_motor = valid_motors.iloc[0]
+            
+        st.session_state.motor_hp = selected_motor['HP_Rating']
+        st.session_state.motor_selected = selected_motor
+        
+        # 3. Performance at current load
+        load_pct = (hp_total / st.session_state.motor_hp) * 100
+        perf = calculations.calculate_motor_performance(load_pct)
+        
+        col_l, col_r = st.columns([2, 1])
+        
+        with col_l:
+            st.markdown(f"**Motor load: {load_pct:.1f}%**")
+            st.success("The design is applicable", icon=":material/check_circle:")
+            
+            fig_mot = plotting.plot_motor_curve(load_pct)
+            st.plotly_chart(fig_mot, use_container_width=True)
+            
+        with col_r:
+            st.subheader("Motor")
+            st.write(f"AGH HP: {hp_agh:.1f} HP")
+            st.write(f"Gas Separator HP: {hp_sep:.1f} HP")
+            st.write(f"Pump HP: {hp_pump:.1f} HP")
+            st.write(f"Protector HP: {hp_prot:.1f} HP")
+            st.markdown(f"**Total HP: {hp_total:.1f} HP**")
+            
+            st.subheader("Motor HP Calculation")
+            st.write(f"ESP required HP at extreme condition: {hp_extreme:.1f} HP")
+            st.write(f"Motor HP from operating condition with 80% motor load factor: {hp_load_80:.1f} HP")
+            st.write(f"Motor Efficiency: {perf['eff']:.1f}%")
+            st.write(f"Motor Operating RPM: {int(perf['rpm'])}")
+            
+            st.subheader("Cable")
+            st.write(f"Operating amperage motor: {perf['amp']:.1f}")
+            
+            st.divider()
+            st.success(f"Selected: {selected_motor['Series']} - {selected_motor['HP_Rating']} HP")
 
     # --- TAB 6: SIMULATION ---
     with tabs[5]:
         st.header("Step 6: Simulation")
         if st.session_state.pump_selected:
-            # Simple intersection check
-            # TDH Req ~ Const for demo
-            tdh_req = calculations.calculate_tdh(st.session_state.depth_tvd, st.session_state.whp, st.session_state.pbhp, sg_mix)
-            fig = render_pump_curve(st.session_state.pump_selected, st.session_state.stages, 60.0, (st.session_state.target_rate, tdh_req))
+            # Prepare System Curve Data
+            pump_df = data.get_pump_catalog()
+            row = pump_df[pump_df['Model'] == st.session_state.pump_selected].iloc[0]
+            qs_sys = np.linspace(0, row['Max_Rate_BPD'] * 1.2, 50)
+            h_sys = [calculations.calculate_system_head(q, st.session_state.depth_tvd, st.session_state.whp, 
+                                                       st.session_state.sbhp, st.session_state.pbhp, 
+                                                       st.session_state.test_rate, sg_mix) for q in qs_sys]
+            
+            # Required TDH at target rate
+            tdh_req = calculations.calculate_system_head(st.session_state.target_rate, st.session_state.depth_tvd, 
+                                                         st.session_state.whp, st.session_state.sbhp, 
+                                                         st.session_state.pbhp, st.session_state.test_rate, sg_mix)
+            
+            fig = render_pump_curve(st.session_state.pump_selected, st.session_state.stages, 60.0, 
+                                     op_point=(st.session_state.target_rate, tdh_req),
+                                     system_curve=(qs_sys, h_sys))
             st.plotly_chart(fig, use_container_width=True)
 
     # --- TAB 7: INTEGRITY ---
@@ -278,8 +437,8 @@ elif nav == "Optimizing":
             # Need Intersection of Pump(Freq) and System(WHP)
             
             # 1. Pump Curve @ Freq
-            row = data.get_pump_catalog()
-            row = row[row['Model'] == st.session_state.pump_selected].iloc[0]
+            pump_df = data.get_pump_catalog()
+            row = pump_df[pump_df['Model'] == st.session_state.pump_selected].iloc[0]
             
             ratio = opt_freq / 60.0
             
@@ -291,27 +450,21 @@ elif nav == "Optimizing":
             h_pump = (row['Head_Coeff_A'] + row['Head_Coeff_B']*q_ref + row['Head_Coeff_C']*q_ref**2) * (ratio**2) * st.session_state.stages
             
             # System Head
-            # PIP = Pr - Q/PI
-            denom = (st.session_state.sbhp - st.session_state.pbhp)
-            pi = st.session_state.test_rate / denom if denom > 0 else 1.0
-            pip = st.session_state.sbhp - (qs / pi)
-            
-            # TDH = TVD + WHP(opt) + Friction - PIP
-            # Friction approx
-            fric = (st.session_state.depth_tvd/1000 * 20) * (qs/2000)**1.8
-            tdh_sys = st.session_state.depth_tvd + (opt_whp/(0.433*sg_mix)) + fric - (pip/(0.433*sg_mix))
+            h_sys = np.array([calculations.calculate_system_head(q, st.session_state.depth_tvd, opt_whp, 
+                                                                st.session_state.sbhp, st.session_state.pbhp, 
+                                                                st.session_state.test_rate, sg_mix) for q in qs])
             
             # Find Cross
-            idx = np.abs(h_pump - tdh_sys).argmin()
+            idx = np.abs(h_pump - h_sys).argmin()
             op_q = qs[idx]
             op_h = h_pump[idx]
             
             st.metric("Predicted rate", f"{op_q:.0f} BPD")
             
             # Plot
-            fig = render_pump_curve(st.session_state.pump_selected, st.session_state.stages, opt_freq, op_point=(op_q, op_h))
-            fig.add_trace(go.Scatter(x=qs, y=tdh_sys, name="System Curve"))
-            st.plotly_chart(fig)
+            fig = render_pump_curve(st.session_state.pump_selected, st.session_state.stages, opt_freq, 
+                                     op_point=(op_q, op_h), system_curve=(qs, h_sys))
+            st.plotly_chart(fig, use_container_width=True)
 
 
 # ==========================================
